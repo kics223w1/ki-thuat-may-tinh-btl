@@ -52,6 +52,7 @@
     # Constants
     float_0_0:      .float 0.0
     float_10_0:     .float 10.0
+    float_10000_0:  .float 10000.0
     float_0_5:      .float 0.5
     
 .text
@@ -495,6 +496,7 @@ filter_done:
     # Also calculates MMSE based on formatted output
     
     # Prepare round constant 10.0
+    # Prepare round constant 10.0
     lwc1 $f10, float_10_0
     
     li $t0, 0
@@ -549,6 +551,7 @@ loop_mmse:
     div.s $f12, $f12, $f10 # avg
     
     # Round MMSE same way
+    lwc1 $f10, float_10_0
     mul.s $f12, $f12, $f10
     round.w.s $f1, $f12
     cvt.s.w $f1, $f1
@@ -580,8 +583,7 @@ loop_print_con:
     add $t1, $t1, $t2
     lwc1 $f12, ($t1)
     
-    li $v0, 2
-    syscall
+    jal print_float_4dec
     
     addi $t0, $t0, 1
     j loop_print_con
@@ -595,14 +597,12 @@ print_mmse_con:
     la $a0, str_mmse
     syscall
     
-    # MMSE is in $f12 already? No, was calculated above.
-    # Recalculate or keep in generic reg? I didn't save it. Re-do or if it's in f12...
-    # Wait, loop_print_con used f12. I need to save MMSE.
-    # Move calculated MMSE to safe reg or recalculate.
-    # Let's save it to stack or register $f20
-    # Update round_mmse block to save result.
+    mov.s $f12, $f20
+    jal print_float_4dec
     
-    # .. (Fixing MMSE save)
+    li $v0, 4
+    la $a0, str_newline
+    syscall
     # But first, let's just write the output file logic too. 
     # Open output.txt
     li $v0, 13
@@ -635,11 +635,84 @@ print_mmse_con:
     
     # Re-calc MMSE for printing since I clobbered f12
     # Load MMSE (need to store it) - let's add storage for single float MMSE
-    j compute_mmse_variable
-
 finish_program:
     li $v0, 10
     syscall
+
+# Print Float with 4 Decimal Places
+# Input: $f12
+print_float_4dec:
+    addi $sp, $sp, -12
+    sw $ra, 0($sp)
+    sw $t0, 4($sp)
+    sw $t1, 8($sp)
+    
+    # Handle negative
+    mtc1 $zero, $f0
+    c.lt.s $f12, $f0
+    bc1f pfd_pos
+    
+    # Print '-'
+    li $v0, 11
+    li $a0, 45 # '-'
+    syscall
+    
+    neg.s $f12, $f12
+    
+pfd_pos:
+    # We want to print val as X.YYYY
+    # Method: round(val * 10000)
+    # Then split into int and mod parts.
+    
+    lwc1 $f10, float_10000_0
+    mul.s $f0, $f12, $f10
+    round.w.s $f0, $f0
+    mfc1 $t0, $f0 # $t0 has rounded integer (val * 10000)
+    
+    # Get divisor 10000
+    li $t1, 10000
+    
+    div $t0, $t1
+    mflo $a0 # Integer part
+    mfhi $t0 # Fractional part (remainder)
+    
+    # Print Integer Part
+    li $v0, 1
+    syscall
+    
+    # Print '.'
+    li $v0, 11
+    li $a0, 46
+    syscall
+    
+    # Print Fractional Part with padding
+    # t0 is remainder e.g. 5 -> 0005
+    blt $t0, 1000, pfd_pad1
+    j pfd_print_frac
+pfd_pad1:
+    li $a0, 48 # '0'
+    syscall
+    blt $t0, 100, pfd_pad2
+    j pfd_print_frac
+pfd_pad2:
+    li $a0, 48
+    syscall
+    blt $t0, 10, pfd_pad3
+    j pfd_print_frac
+pfd_pad3:
+    li $a0, 48
+    syscall
+
+pfd_print_frac:
+    move $a0, $t0
+    li $v0, 1
+    syscall
+    
+    lw $ra, 0($sp)
+    lw $t0, 4($sp)
+    lw $t1, 8($sp)
+    addi $sp, $sp, 12
+    jr $ra
 
 # Helper: Read File to Vector
 # Arguments: $a0 = filename, $a1 = vector buffer
