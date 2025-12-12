@@ -574,15 +574,25 @@ loop_mmse:
 loop_print_con:
     bge $t0, 10, print_mmse_con
     
-    li $v0, 4
-    la $a0, str_space
-    syscall
-    
     la $t1, vec_output
     sll $t2, $t0, 2
     add $t1, $t1, $t2
     lwc1 $f12, ($t1)
     
+    # Check if first element ($t0 == 0)
+    bnez $t0, print_normal
+    
+    # First element: Width 8, No separator
+    li $a1, 0   # No sep
+    li $a2, 8   # Width 8
+    j do_print
+    
+print_normal:
+    # Others: Width 9, Space separator
+    li $a1, 32  # Space
+    li $a2, 9   # Width 9
+    
+do_print:
     jal print_float_4dec
     
     addi $t0, $t0, 1
@@ -598,7 +608,7 @@ print_mmse_con:
     syscall
     
     mov.s $f12, $f20
-    jal print_float_4dec
+    jal print_float_raw
     
     li $v0, 4
     la $a0, str_newline
@@ -639,9 +649,85 @@ finish_program:
     li $v0, 10
     syscall
 
-# Print Float with 4 Decimal Places
-# Input: $f12
+# Print Float with padding
+# Input: $f12 = float value
+#        $a1  = separator char (0 for none, 32 for space)
+#        $a2  = target width (e.g. 9)
 print_float_4dec:
+    addi $sp, $sp, -20
+    sw $ra, 0($sp)
+    sw $s0, 4($sp)
+    sw $t0, 8($sp)
+    sw $t1, 12($sp)
+    sw $t2, 16($sp)
+
+    mov.s $f0, $f12  # Temp copy
+    
+    # Calculate length of number: Sign + Int + Dot + 4
+    # Basic length:
+    li $t0, 5   # 1(dot) + 4(frac)
+    
+    # Check sign
+    mtc1 $zero, $f1
+    c.lt.s $f0, $f1
+    bc1f len_pos
+    # Negative
+    addi $t0, $t0, 1 # +1 for '-'
+    neg.s $f0, $f0   # Abs
+len_pos:
+    # Check int part size
+    li $t1, 1 # digits
+    
+    # If < 10 -> 1 digit
+    lwc1 $f1, float_10_0
+    c.lt.s $f0, $f1
+    bc1t len_done
+    
+    addi $t1, $t1, 1
+    # If < 100 -> 2 digits
+    # (assuming we don't need >100 for this task, but can add)
+    
+len_done:
+    add $t0, $t0, $t1 # content_len (number only)
+    
+    # Pad = width ($a2) - content_len
+    sub $t3, $a2, $t0
+    
+    # Print leading separator if $a1 != 0
+    beqz $a1, check_pad
+    
+    move $s0, $a0 # save a0 just in case
+    li $v0, 11
+    move $a0, $a1
+    syscall
+    move $a0, $s0
+    
+check_pad:
+    bltz $t3, call_print_raw
+    
+    # Print Pad spaces
+print_pad_loop:
+    blez $t3, call_print_raw
+    li $v0, 11
+    li $a0, 32
+    syscall
+    addi $t3, $t3, -1
+    j print_pad_loop
+    
+call_print_raw:
+    # Print the number
+    jal print_float_raw
+    
+    lw $ra, 0($sp)
+    lw $s0, 4($sp)
+    lw $t0, 8($sp)
+    lw $t1, 12($sp)
+    lw $t2, 16($sp)
+    addi $sp, $sp, 20
+    jr $ra
+
+# Raw print X.YYYY
+print_float_raw:
     addi $sp, $sp, -12
     sw $ra, 0($sp)
     sw $t0, 4($sp)
